@@ -628,34 +628,64 @@ public:
 
         Expense* expense = new Expense(description, amount, paidByUserId, splits);
         expenses[expense->expenseId] = expense;
-        
+
         User* paidByUser = getUser(paidByUserId);
         User* toUser = getUser(toUserId);
 
-        paidByUser->updateBalance(toUserId, amount);
-        toUser->updateBalance(paidByUserId, -amount);
-        
-        cout << "Individual expense added: " << description << " (Rs " << amount 
+        // Use the actual computed split owed by toUser, not the full expense amount
+        double owedAmount = 0;
+        for (const Split& split : splits) {
+            if (split.userId == toUserId) {
+                owedAmount = split.amount;
+                break;
+            }
+        }
+
+        paidByUser->updateBalance(toUserId, owedAmount);
+        toUser->updateBalance(paidByUserId, -owedAmount);
+
+        cout << "Individual expense added: " << description << " (Rs " << amount
                 << ") paid by " << paidByUser->name <<" for " << toUser->name << endl;
     }
-    
+
     // Display Method
+    // Aggregates individual balances with balances from every group the user belongs to,
+    // since those were previously tracked in separate, unsynchronized maps.
     void showUserBalance(string& userId) {
         User* user = getUser(userId);
         if (!user) return;
-        
-        cout << endl << "=========== Balance for " << user->name <<" ===================="<<endl; 
-        cout << "Total you owe: Rs " << fixed << setprecision(2) << user->getTotalOwed() << endl;
-        cout << "Total others owe you: Rs " << fixed << setprecision(2) << user->getTotalOwing() << endl;
-        
+
+        map<string, double> combinedBalances = user->balances;
+        for (auto& groupPair : groups) {
+            Group* group = groupPair.second;
+            if (group->isMember(userId)) {
+                for (auto& groupBalance : group->getUserGroupBalances(userId)) {
+                    combinedBalances[groupBalance.first] += groupBalance.second;
+                }
+            }
+        }
+
+        double totalOwed = 0, totalOwing = 0;
+        for (auto& balance : combinedBalances) {
+            if (balance.second > 0) {
+                totalOwing += balance.second;
+            } else if (balance.second < 0) {
+                totalOwed += abs(balance.second);
+            }
+        }
+
+        cout << endl << "=========== Balance for " << user->name <<" ===================="<<endl;
+        cout << "Total you owe: Rs " << fixed << setprecision(2) << totalOwed << endl;
+        cout << "Total others owe you: Rs " << fixed << setprecision(2) << totalOwing << endl;
+
         cout << "Detailed balances:" << endl;
-        for (auto& balance : user->balances) {
+        for (auto& balance : combinedBalances) {
             User* otherUser = getUser(balance.first);
-            if (otherUser) {
+            if (otherUser && abs(balance.second) > 0.01) {
                 if (balance.second > 0) {
-                    cout << "  " << otherUser->name << " owes you: Rs" << balance.second << endl;
+                    cout << "  " << otherUser->name << " owes you: Rs " << fixed << setprecision(2) << balance.second << endl;
                 } else {
-                    cout << "  You owe " << otherUser->name << ": Rs" << abs(balance.second) << endl;
+                    cout << "  You owe " << otherUser->name << ": Rs " << fixed << setprecision(2) << abs(balance.second) << endl;
                 }
             }
         }
